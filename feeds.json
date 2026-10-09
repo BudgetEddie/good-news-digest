@@ -1,0 +1,49 @@
+{
+  "local": [
+    {"name": "CBC Kitchener-Waterloo", "url": "https://www.cbc.ca/webfeed/rss/rss-canada-kitchenerwaterloo"},
+    {"name": "CBC Hamilton", "url": "https://www.cbc.ca/webfeed/rss/rss-canada-hamiltonnews"},
+    {"name": "CBC Toronto", "url": "https://www.cbc.ca/webfeed/rss/rss-canada-toronto"},
+    {"name": "GuelphToday", "url": "https://www.guelphtoday.com/rss"},
+    {"name": "CityNews Toronto", "url": "https://toronto.citynews.ca/feed/"},
+    {"name": "CityNews Kitchener", "url": "https://kitchener.citynews.ca/feed/"},
+    {"name": "Toronto Star GTA", "url": "https://www.thestar.com/search/?f=rss&t=article&c=news/gta*&l=50&s=start_time&sd=desc"},
+    {"name": "McMaster Daily News", "url": "https://news.mcmaster.ca/feed/"},
+    {"name": "Brock News", "url": "https://brocku.ca/brock-news/feed/"}
+  ],
+  "general": [
+    {"name": "Good News Network", "url": "https://www.goodnewsnetwork.org/feed/"},
+    {"name": "Positive News", "url": "https://www.positive.news/feed/"},
+    {"name": "Reasons to Be Cheerful", "url": "https://reasonstobecheerful.world/feed/"}
+  ],
+  "science": [
+    {"name": "NASA", "url": "https://www.nasa.gov/feed/"},
+    {"name": "ScienceDaily", "url": "https://www.sciencedaily.com/rss/top/science.xml"},
+    {"name": "Science News", "url": "https://www.sciencenews.org/feed"},
+    {"name": "ScienceAlert", "url": "https://www.sciencealert.com/feed"}
+  ],
+  "technology": [
+    {"name": "ScienceDaily", "url": "https://www.sciencedaily.com/rss/top/technology.xml"},
+    {"name": "MIT Technology Review", "url": "https://www.technologyreview.com/feed/"},
+    {"name": "CBC Technology", "url": "https://www.cbc.ca/webfeed/rss/rss-technology"}
+  ],
+  "business": [
+    {"name": "CBC Business", "url": "https://www.cbc.ca/webfeed/rss/rss-business"},
+    {"name": "The Globe and Mail", "url": "https://www.theglobeandmail.com/arc/outboundfeeds/rss/category/business/"},
+    {"name": "BetaKit", "url": "https://betakit.com/feed/"}
+  ],
+  "environment": [
+    {"name": "The Guardian", "url": "https://www.theguardian.com/environment/rss"},
+    {"name": "Mongabay", "url": "https://news.mongabay.com/feed/"},
+    {"name": "ScienceDaily", "url": "https://www.sciencedaily.com/rss/top/environment.xml"}
+  ],
+  "health": [
+    {"name": "ScienceDaily", "url": "https://www.sciencedaily.com/rss/top/health.xml"},
+    {"name": "CBC Health", "url": "https://www.cbc.ca/webfeed/rss/rss-health"}
+  ],
+  "culture": [
+    {"name": "CBC Arts", "url": "https://www.cbc.ca/webfeed/rss/rss-arts"},
+    {"name": "The Guardian", "url": "https://www.theguardian.com/culture/rss"},
+    {"name": "Open Culture", "url": "https://www.openculture.com/feed"},
+    {"name": "ARTnews", "url": "https://www.artnews.com/feed/"}
+  ]
+}
