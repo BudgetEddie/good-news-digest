@@ -38,29 +38,27 @@ class FakeClient:
         return reply
 
 
-class EditionWindow(unittest.TestCase):
-    def test_windows(self):
-        self.assertIsNone(digest.due_edition(toronto(5, 59)))
-        self.assertEqual(digest.due_edition(toronto(6)), "am")
-        self.assertEqual(digest.due_edition(toronto(7, 59)), "am")
-        self.assertIsNone(digest.due_edition(toronto(8)))
-        self.assertIsNone(digest.due_edition(toronto(19, 59)))
-        self.assertEqual(digest.due_edition(toronto(20)), "pm")
-        self.assertEqual(digest.due_edition(toronto(21, 30)), "pm")
-        self.assertIsNone(digest.due_edition(toronto(22)))
+class DueEdition(unittest.TestCase):
+    def due(self, hour, minute=0):
+        edition, start = digest.due_edition(toronto(hour, minute))
+        return edition, f"{start:%Y-%m-%d %H:%M}"
 
-    def test_cron_hours_against_both_offsets(self):
-        # Cron fires at 10:00, 11:00, 00:00 and 01:00 UTC. EDT (UTC-4) runs until Nov 1, 2026,
-        # EST (UTC-5) after. In EDT the later entry of each pair lands in the window too, where
-        # the "already sent" check turns it into a retry; in EST only the on-time one does.
-        def windows(day):
-            return [
-                digest.due_edition(datetime(2026, 10 if day == "edt" else 11, 9, h, tzinfo=timezone.utc).astimezone(digest.TZ))
-                for h in (10, 11, 0, 1)
-            ]
+    def test_slot_boundaries(self):
+        self.assertEqual(self.due(6), ("am", "2026-10-09 06:00"))
+        self.assertEqual(self.due(19, 59), ("am", "2026-10-09 06:00"))
+        self.assertEqual(self.due(20), ("pm", "2026-10-09 20:00"))
+        self.assertEqual(self.due(23, 59), ("pm", "2026-10-09 20:00"))
 
-        self.assertEqual(windows("edt"), ["am", "am", "pm", "pm"])
-        self.assertEqual(windows("est"), [None, "am", None, "pm"])
+    def test_before_six_belongs_to_yesterdays_evening_edition(self):
+        self.assertEqual(self.due(5, 59), ("pm", "2026-10-08 20:00"))
+        self.assertEqual(self.due(0, 5), ("pm", "2026-10-08 20:00"))
+
+    def test_hours_late_runs_still_map_to_an_edition(self):
+        # Real GitHub start times seen for this repo (Toronto): none fell in a 6-8 / 20-22 window.
+        self.assertEqual(self.due(10, 14), ("am", "2026-10-09 06:00"))
+        self.assertEqual(self.due(22, 24), ("pm", "2026-10-09 20:00"))
+        self.assertEqual(self.due(1, 41), ("pm", "2026-10-08 20:00"))
+        self.assertEqual(self.due(16, 5), ("am", "2026-10-09 06:00"))
 
 
 class ParseJudgements(unittest.TestCase):
@@ -104,6 +102,12 @@ class KeywordFallback(unittest.TestCase):
     def test_plain_item_without_positive_words_is_dropped(self):
         kept, rejected = digest.judge_all([item(1, title="Council meets on Tuesday")], None)
         self.assertEqual((kept, len(rejected)), ([], 1))
+
+    def test_local_feed_story_must_name_a_nearby_place(self):
+        wire = item(1, group="local", title="Poilievre unveils five-point steel plan", snippet="The plan helps workers grow.")
+        local = item(2, group="local", title="Kitchener market reopens", snippet="A restored hall opens.")
+        self.assertFalse(digest.keyword_judge(wire)["positive"])
+        self.assertTrue(digest.keyword_judge(local)["positive"])
 
     def test_summary_is_two_sentences(self):
         verdict = digest.keyword_judge(item(1, group="general", snippet="One. Two. Three."))
@@ -343,7 +347,7 @@ class MainFlow(unittest.TestCase):
             self.addCleanup(patcher.stop)
         self.send = digest.send_to_kindle
 
-    def run_main(self, hour, *argv, event=None):
+    def run_main(self, hour, *argv, event=None, ai=False):
         class Frozen(datetime):
             @classmethod
             def now(cls, tz=None):
@@ -351,8 +355,10 @@ class MainFlow(unittest.TestCase):
 
         env = dict(self.ENV, **({"GITHUB_EVENT_NAME": event} if event else {}))
         with mock.patch.object(digest, "datetime", Frozen), mock.patch.dict(os.environ, env):
-            os.environ.pop("GITHUB_EVENT_NAME", None) if not event else None
-            return digest.main(["--no-ai", *argv])
+            if not event:
+                os.environ.pop("GITHUB_EVENT_NAME", None)
+            os.environ.pop("GEMINI_API_KEY", None)
+            return digest.main([*argv] if ai else ["--no-ai", *argv])
 
     def test_scheduled_run_sends_records_then_skips_the_retry(self):
         self.assertEqual(self.run_main(6, event="schedule"), 0)
@@ -364,11 +370,20 @@ class MainFlow(unittest.TestCase):
         self.assertEqual(self.run_main(7, event="schedule"), 0)
         self.assertEqual(self.send.call_count, 1)
 
-    def test_scheduled_run_outside_window_does_nothing(self):
-        with mock.patch("digest.collect") as collect:
-            self.assertEqual(self.run_main(13, event="schedule"), 0)
-            collect.assert_not_called()
-        self.send.assert_not_called()
+    def test_late_scheduled_run_still_sends_once(self):
+        # GitHub started the 6 a.m. job at 10:14 a.m. in practice.
+        self.assertEqual(self.run_main(10, event="schedule"), 0)
+        self.assertEqual(self.send.call_args.args[1], "Good News, Oct 9, Morning")
+        self.run_main(13, event="schedule")
+        self.assertEqual(self.send.call_count, 1)
+
+    def test_overnight_run_delivers_the_previous_evening_edition(self):
+        # The 8 p.m. job started at 2:10 a.m. the next day.
+        self.run_main(2, event="schedule")
+        self.assertEqual(self.send.call_args.args[1], "Good News, Oct 8, Evening")
+        self.assertEqual(json.loads(digest.STATE_PATH.read_text())["sent"], ["2026-10-08-pm"])
+        self.run_main(5, event="schedule")
+        self.assertEqual(self.send.call_count, 1)
 
     def test_evening_edition_is_separate_from_morning(self):
         self.run_main(6, event="schedule")
@@ -388,8 +403,12 @@ class MainFlow(unittest.TestCase):
     def test_manual_run_sends_but_does_not_touch_state(self):
         self.assertEqual(self.run_main(15), 0)
         self.assertEqual(self.send.call_count, 1)
-        self.assertEqual(self.send.call_args.args[1], "Good News, Oct 9, Evening")
+        self.assertEqual(self.send.call_args.args[1], "Good News, Oct 9, Morning")
         self.assertFalse(digest.STATE_PATH.exists())
+
+    def test_no_gemini_key_falls_back_to_keywords_instead_of_failing(self):
+        self.assertEqual(self.run_main(15, ai=True), 0)
+        self.assertEqual(self.send.call_count, 1)
 
     def test_dry_run_never_sends(self):
         self.assertEqual(self.run_main(15, "--dry-run"), 0)

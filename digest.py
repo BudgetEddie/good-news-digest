@@ -30,10 +30,10 @@ STATE_PATH = ROOT / "state" / "state.json"
 OUT_DIR = ROOT / "out"
 
 TZ = ZoneInfo("America/Toronto")
-# Toronto hours in which a scheduled run may send each edition. The window is two
-# hours wide so a late GitHub start still sends, and the second cron entry acts as
-# a retry when the first run failed (a sent edition is recorded in state.json).
-SLOTS = {"am": (6, 8), "pm": (20, 22)}
+# Toronto hour from which each edition is due. GitHub starts scheduled runs hours late,
+# so there is no send window: any run after a slot's start sends that edition if it has
+# not gone out yet (recorded in state.json). A late run delays an edition, never drops it.
+SLOTS = {"am": 6, "pm": 20}
 EDITION_NAMES = {"am": "Morning", "pm": "Evening"}
 
 CATEGORY_ORDER = ["local", "science", "technology", "business", "environment", "health", "culture"]
@@ -346,9 +346,21 @@ _POSITIVE = re.compile(
 )
 
 
+# Stand-in for the model's "is this really local?" call: general feeds such as GuelphToday
+# carry national wire stories, so a story from a local feed must name a nearby place.
+_LOCAL_PLACES = re.compile(
+    r"\b(kitchener|waterloo|guelph|hamilton|st\.? catharines|niagara|welland|thorold|brantford|cambridge|"
+    r"burlington|oakville|milton|halton|toronto|gta|scarborough|etobicoke|north york|mississauga|brampton|"
+    r"wellington|fergus|elora|mcmaster|brock|oktoberfest)\b",
+    re.I,
+)
+
+
 def keyword_judge(item: Item) -> dict:
     text = f"{item.title} {item.snippet}"
     if _NEGATIVE.search(item.title):
+        return {"positive": False, "score": 1}
+    if item.group == "local" and not _LOCAL_PLACES.search(text):
         return {"positive": False, "score": 1}
     hits = len(_POSITIVE.findall(text))
     score = 2 + (1 if item.group in PRE_FILTERED_GROUPS else 0) + min(hits, 2)
@@ -507,11 +519,15 @@ def save_state(state: dict, now: datetime) -> None:
     STATE_PATH.write_text(json.dumps(state, indent=1, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def due_edition(now: datetime) -> str | None:
-    for edition, (start, end) in SLOTS.items():
-        if start <= now.hour < end:
-            return edition
-    return None
+def due_edition(now: datetime) -> tuple[str, datetime]:
+    """The most recent edition whose send time has passed, with that send time."""
+    starts = [
+        (day.replace(hour=hour, minute=0, second=0, microsecond=0), name)
+        for day in (now, now - timedelta(days=1))
+        for name, hour in SLOTS.items()
+    ]
+    start, edition = max(pair for pair in starts if pair[0] <= now)
+    return edition, start
 
 
 # --------------------------------------------------------------------------- main
@@ -522,8 +538,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--headlines", action="store_true", help="print today's headlines per group and exit")
     p.add_argument("--dry-run", action="store_true", help="build the EPUB but do not email it")
     p.add_argument("--no-ai", action="store_true", help="use the keyword filter instead of Gemini")
-    p.add_argument("--edition", choices=sorted(SLOTS), help="am or pm (default: from the current Toronto time)")
-    p.add_argument("--force", action="store_true", help="ignore the edition-hour check on scheduled runs")
+    p.add_argument("--edition", choices=sorted(SLOTS), help="am or pm (default: the most recent edition due)")
+    p.add_argument("--force", action="store_true", help="treat a scheduled run as manual: resend, record nothing")
     p.add_argument("--record", action="store_true", help="record delivered stories even on a manual run")
     p.add_argument("--list-models", action="store_true", help="list Gemini models your API key can use and exit")
     return p.parse_args(argv)
@@ -551,14 +567,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.edition:
         edition = args.edition
-    elif scheduled:
-        edition = due_edition(now)
-        if edition is None:
-            log.info("It is %s in Toronto, not an edition hour. Nothing to do.", now.strftime("%H:%M"))
-            return 0
+        start = now.replace(hour=SLOTS[edition], minute=0, second=0, microsecond=0)
     else:
-        edition = "am" if now.hour < 12 else "pm"
-    edition_key = f"{now:%Y-%m-%d}-{edition}"
+        edition, start = due_edition(now)
+    edition_key = f"{start:%Y-%m-%d}-{edition}"
     if scheduled and edition_key in state["sent"]:
         log.info("Edition %s was already sent. Nothing to do.", edition_key)
         return 0
@@ -581,11 +593,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     client = None
-    if not args.no_ai:
-        key = os.environ.get("GEMINI_API_KEY")
-        if not key:
-            log.error("GEMINI_API_KEY is not set (use --no-ai for the keyword filter).")
-            return 1
+    key = os.environ.get("GEMINI_API_KEY")
+    if not args.no_ai and not key:
+        log.warning("GEMINI_API_KEY is not set; using the keyword filter instead of Gemini.")
+    elif not args.no_ai:
         models = [m.strip() for m in (os.environ.get("GEMINI_MODELS") or "").split(",") if m.strip()] or DEFAULT_MODELS
         client = GeminiClient(key, models, float(os.environ.get("GEMINI_MIN_INTERVAL") or 6))
 
@@ -600,8 +611,8 @@ def main(argv: list[str] | None = None) -> int:
         log.warning("Nothing positive enough today; no edition built.")
         return 0
 
-    path = build_epub(sections, now, edition)
-    subject = edition_title(now, edition)
+    path = build_epub(sections, start, edition)
+    subject = edition_title(start, edition)
     log.info("Built %s with %d stories (%s)", path.name, total, ", ".join(f"{c}: {len(s)}" for c, s in sections.items()))
 
     if args.dry_run:

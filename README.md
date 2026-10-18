@@ -11,12 +11,12 @@ feeds.json ─► digest.py ─► Gemini (positive? score, category, summary) �
 1. **Kindle.** Amazon → Manage Your Content and Devices → Preferences → Personal Document Settings.
    Copy your Send-to-Kindle address (`…@kindle.com`) and add your sending address to *Approved Personal Document E-mail List*.
 2. **Sending account.** Use a dedicated Gmail address. Turn on two-step verification and create an app password.
-3. **Gemini key.** Create a free key in [Google AI Studio](https://aistudio.google.com/).
+3. **Gemini key (optional).** Create a free key in [Google AI Studio](https://aistudio.google.com/). Skip it to use the keyword filter instead (see below).
 4. **GitHub.** Create a **private** repository, push this folder, then add four secrets under Settings → Secrets and variables → Actions:
 
    | Secret | Value |
    | --- | --- |
-   | `GEMINI_API_KEY` | the AI Studio key |
+   | `GEMINI_API_KEY` | the AI Studio key (optional) |
    | `SMTP_USER` | the sending Gmail address |
    | `SMTP_APP_PASSWORD` | the Gmail app password |
    | `KINDLE_EMAIL` | your `…@kindle.com` address |
@@ -51,20 +51,28 @@ Open the EPUB in Apple Books or the Kindle app before trusting a change to the p
 
 ## How scheduling works
 
-GitHub cron is UTC and ignores daylight saving, so the workflow fires at 10:00, 11:00, 00:00 and 01:00 UTC. `digest.py` only sends when Toronto time is 6:00–7:59 (morning) or 20:00–21:59 (evening), and only once per edition. That gives three properties:
+GitHub cron is UTC-only, ignores daylight saving, and starts scheduled jobs late. In this repo's first nine days it started them 2.5 to 9.5 hours late, so no fixed send window can work. Instead, `digest.py` asks "which edition is due?": the 6:00 edition from 6:00 a.m., the 8:00 p.m. edition from 8:00 p.m. (until 6:00 the next morning). Any scheduled run sends the due edition unless `state.json` says it already went out.
 
-- Clock change (Nov 1): the right cron entry takes over by itself.
-- Late GitHub start: a run delayed past 6:00 still sends.
-- Failed run: the next cron entry an hour later retries it (during EDT).
+- Clock change (Nov 1): nothing to adjust, the due edition is computed in Toronto time.
+- Late GitHub start: the edition is late, never skipped.
+- Failed run: the next of the four daily cron entries retries it.
 
-Manual runs ignore the window, send immediately, and do not touch `state.json`.
+Editions therefore arrive when GitHub gets round to it, not at 6:00 and 20:00 sharp. If that matters, have an external timer call the workflow's `workflow_dispatch` at the exact times, which GitHub starts promptly, and keep the cron entries as a backup.
+
+Manual runs send immediately, whatever the time, and do not touch `state.json`.
+
+## Running without Gemini
+
+Leave `GEMINI_API_KEY` unset (or run with `--no-ai`) and the digest uses a keyword filter instead: headlines containing words like *killed*, *charged* or *crash* are dropped, and stories need positive words (or a pre-filtered good-news source) to score high enough. Summaries are the first two sentences of the publisher's own snippet. A story from a local feed must name a nearby place to appear under Local.
+
+It costs nothing and needs no Google account, but it is blunter than Gemini: expect the odd grim or dull story, and a thinner Local section. The `general` feeds (Good News Network, Positive News, Reasons to Be Cheerful) are already positive, so those hold up best. A wrong or revoked key still fails the run rather than silently downgrading.
 
 ## Tuning
 
 - **Model.** Defaults to `gemini-3.5-flash`, then `gemini-3.5-flash-lite` if the first is missing or out of daily quota. Override with a repository *variable* (not secret) `GEMINI_MODELS`, e.g. `gemini-3.8-flash,gemini-3.5-flash-lite`. Check `--list-models` and Google's [deprecations page](https://ai.google.dev/gemini-api/docs/deprecations); names change.
 - **Prompt.** `PROMPT` in `digest.py`. If grim stories slip through, add two or three example rejections there rather than raising `MIN_SCORE`.
 - **Volume.** `MAX_PER_CATEGORY`, `MAX_LOCAL`, `GROUP_CAP`, `BATCH_SIZE`.
-- **Free-tier pace.** Gemini calls are spaced `GEMINI_MIN_INTERVAL` seconds apart (default 6). A per-minute 429 is waited out; a daily-quota 429 moves to the next model. If every model fails for a batch, that batch falls back to the keyword filter and the log says so. A rejected API key fails the run instead, so you hear about it.
+- **Free-tier pace.** Gemini calls are spaced `GEMINI_MIN_INTERVAL` seconds apart (default 6). A per-minute 429 is waited out; a daily-quota 429 moves to the next model. If every model fails for a batch, that batch falls back to the keyword filter and the log says so.
 
 ## Known gaps
 

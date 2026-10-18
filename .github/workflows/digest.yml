@@ -2,13 +2,14 @@ name: good-news-digest
 
 on:
   schedule:
-    # 6:00 a.m. and 8:00 p.m. Toronto, in both EDT and EST. GitHub cron is UTC only,
-    # so both candidates are listed and digest.py exits unless Toronto time is in an
-    # edition window (see SLOTS in digest.py). The second entry also retries a failure.
-    - cron: "0 10 * * *"
-    - cron: "0 11 * * *"
-    - cron: "0 0 * * *"
-    - cron: "0 1 * * *"
+    # GitHub only guarantees "roughly on time" and has started this job 2-9 hours late, so
+    # digest.py has no send window: any run after 6:00 / 20:00 Toronto sends that edition if
+    # it has not gone out yet. Four entries cover EDT and EST and give failures a retry.
+    # Minute 17, not :00, because GitHub's own docs say the top of the hour is the busiest.
+    - cron: "17 10 * * *"
+    - cron: "17 11 * * *"
+    - cron: "17 0 * * *"
+    - cron: "17 1 * * *"
   workflow_dispatch:
 
 permissions:
