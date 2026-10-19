@@ -6,13 +6,45 @@ Collects news from free RSS feeds, has Gemini keep only the positive stories, bu
 feeds.json ─► digest.py ─► Gemini (positive? score, category, summary) ─► EPUB ─► SMTP ─► @kindle.com
 ```
 
+## Good News Website
+
+The same feeds and Gemini filter also publish a public static site every 3 hours (`site_build.py`, `.github/workflows/site.yml`). The website is stricter than the Kindle digest:
+
+- Only stories Gemini rates **4 or 5** (the digest takes 3+).
+- **No politics**: Gemini is told to reject it, and a keyword backstop (`_POLITICAL`) drops anything that slips through.
+- No earnings, funding rounds, sports results, celebrity news or sponsored content (`SITE_RULES`).
+- No keyword fallback: if Gemini can't judge a batch, those stories wait for the next run instead of going up unchecked. Without `GEMINI_API_KEY` the build refuses to run.
+
+Each story is judged once (`state/site.json` remembers the URL), so later runs only send new stories to Gemini. Published stories stay for 10 days.
+
+```
+feeds.json ─► site_build.py ─► Gemini (+ site rules) ─► state/site.json ─► public/ ─► GitHub Pages
+```
+
+**Preview locally** (keyword filter, saves nothing):
+
+```bash
+.venv/bin/python site_build.py --no-ai
+python3 -m http.server 8765 --directory public   # then open http://localhost:8765
+```
+
+`--render-only` rebuilds `public/` from the saved archive without fetching, which is handy when editing `site/style.css` or `site/about.html`.
+
+| File | Purpose |
+| --- | --- |
+| `site_build.py` | Fetch new stories → Gemini with site rules → archive → render HTML, RSS and JSON. |
+| `site/` | Static assets copied into `public/`: `style.css`, `app.js` (topic filters), `favicon.svg`, and `about.html` (the "How we pick stories" page; `<!-- SOURCES -->` is filled from `feeds.json`). |
+| `state/site.json` | Published stories and URLs already judged. The job commits it back. |
+
+**Hosting.** Settings → Pages → Source: **GitHub Actions**. GitHub Pages needs a public repository on the free plan. Once you have a custom domain, set a repository variable `SITE_URL` so share previews and the RSS feed use it.
+
 ## One-time setup
 
 1. **Kindle.** Amazon → Manage Your Content and Devices → Preferences → Personal Document Settings.
    Copy your Send-to-Kindle address (`…@kindle.com`) and add your sending address to *Approved Personal Document E-mail List*.
 2. **Sending account.** Use a dedicated Gmail address. Turn on two-step verification and create an app password.
 3. **Gemini key (optional).** Create a free key in [Google AI Studio](https://aistudio.google.com/). Skip it to use the keyword filter instead (see below).
-4. **GitHub.** Create a **private** repository, push this folder, then add four secrets under Settings → Secrets and variables → Actions:
+4. **GitHub.** Create a repository (public, so GitHub Pages can host the website on the free plan; the secrets below stay private either way), push this folder, then add four secrets under Settings → Secrets and variables → Actions:
 
    | Secret | Value |
    | --- | --- |

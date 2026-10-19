@@ -45,5 +45,6 @@ jobs:
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add state/
             git commit -m "Record delivered stories"
+            git pull --rebase origin "${GITHUB_REF_NAME}" # the website job commits to main too
             git push
           fi

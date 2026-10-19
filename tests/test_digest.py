@@ -137,6 +137,12 @@ class JudgeAll(unittest.TestCase):
         kept, _ = digest.judge_all(items, FakeClient(digest.GeminiError("boom")))
         self.assertEqual(len(kept), 1)
 
+    def test_degraded_filter_is_flagged_on_the_run_page(self):
+        items = [item(0, group="general", title="Owl rescued by neighbours")]
+        with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}), mock.patch("builtins.print") as out:
+            digest.judge_all(items, FakeClient(digest.GeminiError("503")))
+        self.assertIn("::warning title=Gemini filter degraded::", out.call_args.args[0])
+
     def test_malformed_json_is_retried_once(self):
         items = [item(0)]
         good = json.dumps([{"id": 0, "positive": True, "score": 4, "category": "science", "summary": "Fine."}])
@@ -189,6 +195,29 @@ class GeminiHttp(unittest.TestCase):
     def test_missing_model_moves_to_next_model(self):
         ok = self.response(200, {"candidates": [{"content": {"parts": [{"text": "[]"}]}}]})
         with mock.patch("digest.requests.post", side_effect=[self.response(404), ok]):
+            self.assertEqual(self.client().generate("p"), "[]")
+
+    def test_overloaded_model_fails_over_and_is_demoted_not_dropped(self):
+        busy = self.response(503, text='{"error": {"status": "UNAVAILABLE"}}')
+        ok = self.response(200, {"candidates": [{"content": {"parts": [{"text": "[]"}]}}]})
+        client = self.client()
+        with mock.patch("digest.requests.post", side_effect=[busy, busy, busy, ok]) as post, mock.patch("digest.time.sleep"):
+            self.assertEqual(client.generate("p"), "[]")
+        self.assertIn("model-b", post.call_args_list[3].args[0])
+        self.assertEqual(client.models, ["model-b", "model-a"])  # a is retried later, not lost
+
+    def test_every_model_busy_is_a_batch_error_and_keeps_the_models(self):
+        busy = self.response(503, text="overloaded")
+        client = self.client()
+        with mock.patch("digest.requests.post", return_value=busy), mock.patch("digest.time.sleep"):
+            with self.assertRaises(digest.GeminiError):
+                client.generate("p")
+        self.assertEqual(sorted(client.models), ["model-a", "model-b"])
+
+    def test_persistent_per_minute_429_moves_to_next_model(self):
+        slow = self.response(429, text="RESOURCE_EXHAUSTED PerMinute")
+        ok = self.response(200, {"candidates": [{"content": {"parts": [{"text": "[]"}]}}]})
+        with mock.patch("digest.requests.post", side_effect=[slow, slow, slow, ok]), mock.patch("digest.time.sleep"):
             self.assertEqual(self.client().generate("p"), "[]")
 
     def test_bad_key_is_fatal(self):
