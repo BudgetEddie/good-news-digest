@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import digest  # noqa: E402
 import site_build  # noqa: E402
+import site_pdf  # noqa: E402
 from digest import Item  # noqa: E402
 from test_digest import FakeClient  # noqa: E402
 
@@ -139,6 +140,45 @@ class Render(unittest.TestCase):
             self.assertIn("<li>Example</li>", about)
             self.assertNotIn("<!--", about)
             self.assertNotIn("score", json.loads((out / "stories.json").read_text())["stories"][0])
+
+
+class Pdf(unittest.TestCase):
+    def build(self, stories):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "public"
+            site_build.render_site({"judged": {}, "stories": stories}, FEEDS, NOW, out)
+            index = (out / "index.html").read_text()
+            pdf = (out / "today.pdf").read_bytes() if (out / "today.pdf").exists() else None
+        return index, pdf
+
+    def test_pdf_holds_only_the_newest_day(self):
+        today = story(1, title="Otters return to the river")
+        yesterday = story(2, title="Old news story", published=NOW - timedelta(days=1))
+        index, pdf = self.build([today, yesterday])
+        self.assertTrue(pdf.startswith(b"%PDF"))
+        self.assertIn(b"https://example.com/s1", pdf)  # clickable link to the original
+        self.assertNotIn(b"https://example.com/s2", pdf)
+        self.assertIn('href="today.pdf" download="good-news-2026-10-18.pdf"', index)
+        self.assertIn("Download today&#x27;s news as a PDF", index.replace("'", "&#x27;"))
+        self.assertIn("1 story,", index)
+
+    def test_just_after_midnight_offers_yesterdays_pdf(self):
+        _, pdf = self.build([story(1, published=NOW - timedelta(days=1))])
+        self.assertIsNotNone(pdf)
+        page = site_build.render_index([story(1, published=NOW - timedelta(days=1))], NOW, 3, "2026-10-17")
+        self.assertIn("Download October 17&#x27;s news", page.replace("'", "&#x27;"))
+
+    def test_no_stories_means_no_pdf_and_no_button(self):
+        index, pdf = self.build([])
+        self.assertIsNone(pdf)
+        self.assertNotIn("today.pdf", index)
+
+    def test_text_the_builtin_fonts_cannot_draw_is_dropped_not_boxed(self):
+        self.assertEqual(site_pdf.pdf_text("Café “wins” — 🎉 ﬁnal & <b>"), "Café “wins” — final &amp; &lt;b&gt;")
+
+    def test_awkward_titles_still_build(self):
+        _, pdf = self.build([story(1, title='Kids <3 "robots" & 🤖 émojis'), story(2, category="unknown")])
+        self.assertTrue(pdf.startswith(b"%PDF"))
 
 
 class Main(unittest.TestCase):

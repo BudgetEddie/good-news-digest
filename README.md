@@ -33,6 +33,7 @@ python3 -m http.server 8765 --directory public   # then open http://localhost:87
 | File | Purpose |
 | --- | --- |
 | `site_build.py` | Fetch new stories → Gemini with site rules → archive → render HTML, RSS and JSON. |
+| `site_pdf.py` | The newest day's stories as `today.pdf` (Letter size, clickable links), offered by the "Download today's news as a PDF" button. Uses ReportLab's built-in fonts, so emoji are dropped from the PDF. |
 | `site/` | Static assets copied into `public/`: `style.css`, `app.js` (topic filters), `favicon.svg`, and `about.html` (the "How we pick stories" page; `<!-- SOURCES -->` is filled from `feeds.json`). |
 | `state/site.json` | Published stories and URLs already judged. The job commits it back. |
 

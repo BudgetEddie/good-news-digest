@@ -16,6 +16,7 @@ from email.utils import format_datetime
 from pathlib import Path
 
 import digest
+import site_pdf
 from digest import TZ, Item
 
 SITE_NAME = "Good News Website"
@@ -219,10 +220,25 @@ def card(story: dict) -> str:
 </article>"""
 
 
-def render_index(stories: list[dict], now: datetime, source_count: int) -> str:
+def group_by_day(stories: list[dict]) -> dict[str, list[dict]]:
+    """Stories by Toronto publish date ("2026-10-18"), newest day first."""
     days: dict[str, list[dict]] = {}
     for story in sorted(stories, key=lambda s: s["published"], reverse=True):
         days.setdefault(_dt(story["published"]).strftime("%Y-%m-%d"), []).append(story)
+    return days
+
+
+def _day(day_key: str) -> datetime:
+    return datetime.strptime(day_key, "%Y-%m-%d").replace(tzinfo=TZ)
+
+
+def pdf_name(day_key: str) -> str:
+    return f"good-news-{day_key}.pdf"
+
+
+def render_index(stories: list[dict], now: datetime, source_count: int, pdf_day: str | None = None) -> str:
+    """pdf_day: the day whose PDF was built as today.pdf, if any; adds the download button."""
+    days = group_by_day(stories)
 
     present = {s["category"] for s in stories}
     chips = ['<button type="button" class="chip" data-filter="all" aria-pressed="true">All</button>']
@@ -236,7 +252,7 @@ def render_index(stories: list[dict], now: datetime, source_count: int) -> str:
     sections = []
     for day_key, day_stories in days.items():
         day_stories.sort(key=lambda s: (s["score"], s["published"]), reverse=True)
-        label = _day_label(datetime.strptime(day_key, "%Y-%m-%d").replace(tzinfo=TZ), now)
+        label = _day_label(_day(day_key), now)
         cards = "\n".join(card(s) for s in day_stories)
         sections.append(f'<section class="day"><h2>{esc(label)}</h2>\n<div class="grid">\n{cards}\n</div></section>')
 
@@ -247,11 +263,21 @@ def render_index(stories: list[dict], now: datetime, source_count: int) -> str:
         stories_html = '<p class="empty">The first good news is on its way. Check back in a few hours.</p>'
 
     updated = f'<time class="updated" datetime="{now.isoformat(timespec="seconds")}">{now:%B} {now.day} at {_clock(now)}</time>'
+    download = ""
+    if pdf_day:
+        day = _day(pdf_day)
+        whose = "today's" if day.date() == now.date() else f"{day:%B} {day.day}'s"
+        count = len(days.get(pdf_day, []))
+        download = (
+            f'\n  <p class="download-row"><a class="download" href="today.pdf" download="{pdf_name(pdf_day)}">'
+            f'<span aria-hidden="true">⬇</span> Download {whose} news as a PDF</a>'
+            f' <span class="download-note">{count} {"story" if count == 1 else "stories"}, ready to print or share</span></p>'
+        )
     body = f"""<section class="hero">
   <h1>Good things are happening.</h1>
   <p class="lede">{len(stories)} uplifting stories from the last {KEEP_DAYS} days, picked from {source_count} trusted news sources.
   No politics, no doom, no outrage.</p>
-  <p class="stamp">Updated {updated}</p>
+  <p class="stamp">Updated {updated}</p>{download}
 </section>
 <div class="filters" role="group" aria-label="Filter by topic">
   {''.join(chips)}
@@ -304,7 +330,11 @@ def render_site(archive: dict, feeds: dict, now: datetime, out: Path = PUBLIC_DI
     shutil.copytree(ASSETS_DIR, out, ignore=shutil.ignore_patterns("about.html", ".DS_Store"))
     stories = archive["stories"]
     source_count = len({f["name"] for group in feeds.values() for f in group})
-    (out / "index.html").write_text(render_index(stories, now, source_count), encoding="utf-8")
+    days = group_by_day(stories)
+    pdf_day = next(iter(days), None)  # the newest day with stories: today, or yesterday just after midnight
+    if pdf_day:
+        site_pdf.build_pdf(out / "today.pdf", days[pdf_day], _day(pdf_day), CATEGORIES, SITE_NAME, SITE_URL)
+    (out / "index.html").write_text(render_index(stories, now, source_count, pdf_day), encoding="utf-8")
     (out / "about.html").write_text(render_about(feeds, now), encoding="utf-8")
     (out / "feed.xml").write_text(render_feed(stories, now), encoding="utf-8")
     public = [{k: v for k, v in s.items() if k != "score"} for s in stories]
